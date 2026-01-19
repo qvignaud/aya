@@ -534,14 +534,8 @@ impl<'a> EbpfLoader<'a> {
             )? {
                 obj.set_max_entries(max_entries)
             }
-            match obj.map_type().try_into() {
-                Ok(BPF_MAP_TYPE_CPUMAP) => {
-                    obj.set_value_size(if FEATURES.cpumap_prog_id() { 8 } else { 4 })
-                }
-                Ok(BPF_MAP_TYPE_DEVMAP | BPF_MAP_TYPE_DEVMAP_HASH) => {
-                    obj.set_value_size(if FEATURES.devmap_prog_id() { 8 } else { 4 })
-                }
-                _ => (),
+            if let Some(value_size) = value_size_override(map_type) {
+                obj.set_value_size(value_size)
             }
             let btf_fd = btf_fd.as_deref().map(|fd| fd.as_fd());
             let mut map = if let Some(pin_path) = map_pin_path_by_name.get(name.as_str()) {
@@ -832,6 +826,19 @@ fn max_entries_override(
     })
 }
 
+/// Computes the value which should be used to override the value_size value of the map
+/// based on the rules for that map type.
+fn value_size_override(map_type: bpf_map_type) -> Option<u32> {
+    match map_type {
+        BPF_MAP_TYPE_CPUMAP => Some(if FEATURES.cpumap_prog_id() { 8 } else { 4 }),
+        BPF_MAP_TYPE_DEVMAP | BPF_MAP_TYPE_DEVMAP_HASH => {
+            Some(if FEATURES.devmap_prog_id() { 8 } else { 4 })
+        }
+        BPF_MAP_TYPE_RINGBUF => Some(0),
+        _ => None,
+    }
+}
+
 // Adjusts the byte size of a RingBuf map to match a power-of-two multiple of the page size.
 //
 // This mirrors the logic used by libbpf.
@@ -1117,7 +1124,7 @@ impl Ebpf {
     ///
     /// let program: &mut UProbe = bpf.program_mut("SSL_read").unwrap().try_into()?;
     /// program.load()?;
-    /// program.attach("SSL_read", "libssl", None, None)?;
+    /// program.attach("SSL_read", "libssl", None)?;
     /// # Ok::<(), aya::EbpfError>(())
     /// ```
     pub fn program_mut(&mut self, name: &str) -> Option<&mut Program> {

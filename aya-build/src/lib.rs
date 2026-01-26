@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
     io::{BufRead as _, BufReader},
     path::PathBuf,
@@ -10,6 +10,8 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use cargo_metadata::{Artifact, CompilerMessage, Message, Target};
+use rustc_version::Channel;
+use which::which;
 
 #[derive(Default)]
 pub struct Package<'a> {
@@ -43,6 +45,18 @@ pub fn build_ebpf<'a>(
     packages: impl IntoIterator<Item = Package<'a>>,
     toolchain: Toolchain<'a>,
 ) -> Result<()> {
+    const AYA_BUILD_SKIP: &str = "AYA_BUILD_SKIP";
+    println!("cargo:rerun-if-env-changed={AYA_BUILD_SKIP}");
+    if let Some(aya_build_skip) = env::var_os(AYA_BUILD_SKIP)
+        && (aya_build_skip.eq("1") || aya_build_skip.eq_ignore_ascii_case("true"))
+    {
+        println!(
+            "cargo:warning={AYA_BUILD_SKIP}={}; skipping eBPF build",
+            aya_build_skip.display()
+        );
+        return Ok(());
+    }
+
     let out_dir = env::var_os("OUT_DIR").ok_or(anyhow!("OUT_DIR not set"))?;
     let out_dir = PathBuf::from(out_dir);
 
@@ -65,6 +79,41 @@ pub fn build_ebpf<'a>(
     let bpf_target_arch = target_arch_fixup(bpf_target_arch.into());
     let target = format!("{target}-unknown-none");
 
+    const RUSTUP: &str = "rustup";
+    let rustup = which(RUSTUP);
+    let prefix: &[_] = match rustup.as_ref() {
+        Ok(rustup) => &[
+            rustup.as_os_str(),
+            OsStr::new("run"),
+            OsStr::new(toolchain.as_str()),
+        ],
+        Err(err) => {
+            println!("cargo:warning=which({RUSTUP})={err}; proceeding with current toolchain");
+            &[]
+        }
+    };
+
+    let cmd = |program| match prefix {
+        [] => Command::new(program),
+        [wrapper, args @ ..] => {
+            let mut cmd = Command::new(wrapper);
+            cmd.args(args).arg(program);
+            cmd
+        }
+    };
+
+    let rustc_version::VersionMeta {
+        semver: _,
+        commit_hash: _,
+        commit_date: _,
+        build_date: _,
+        channel,
+        host: _,
+        short_version_string: _,
+        llvm_version: _,
+    } = rustc_version::VersionMeta::for_command(cmd("rustc"))
+        .context("failed to get rustc version meta")?;
+
     for Package {
         name,
         root_dir,
@@ -78,25 +127,26 @@ pub fn build_ebpf<'a>(
         // changes to the binaries too, which gets us the rest of the way.
         println!("cargo:rerun-if-changed={root_dir}");
 
-        let mut cmd = Command::new("rustup");
+        let mut cmd = cmd("cargo");
         cmd.args([
-            "run",
-            toolchain.as_str(),
-            "cargo",
             "build",
             "--package",
             name,
-            "-Z",
-            "build-std=core",
             "--bins",
             "--message-format=json",
             "--release",
             "--target",
             &target,
         ]);
+
+        if channel == Channel::Nightly {
+            cmd.args(["-Z", "build-std=core"]);
+        }
+
         if no_default_features {
             cmd.arg("--no-default-features");
         }
+
         cmd.args(["--features", &features.join(",")]);
 
         {
@@ -237,14 +287,14 @@ pub fn emit_bpf_target_arch_cfg() {
     const HOST: &str = "HOST";
     println!("cargo:rerun-if-env-changed={HOST}");
 
-    if std::env::var_os(BPF_TARGET_ARCH).is_none() {
-        let host = std::env::var_os(HOST).unwrap_or_else(|| panic!("{HOST} not set"));
+    if env::var_os(BPF_TARGET_ARCH).is_none() {
+        let host = env::var_os(HOST).unwrap_or_else(|| panic!("{HOST} not set"));
         let host = host
             .into_string()
             .unwrap_or_else(|err| panic!("OsString::into_string({HOST}): {err:?}"));
         let host = host.as_str();
 
-        let bpf_target_arch = if let Some(bpf_target_arch) = std::env::var_os(AYA_BPF_TARGET_ARCH) {
+        let bpf_target_arch = if let Some(bpf_target_arch) = env::var_os(AYA_BPF_TARGET_ARCH) {
             bpf_target_arch
                 .into_string()
                 .unwrap_or_else(|err| {

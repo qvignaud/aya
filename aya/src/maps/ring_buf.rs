@@ -7,7 +7,6 @@
 use std::{
     borrow::Borrow,
     fmt::{self, Debug, Formatter},
-    mem,
     ops::Deref,
     os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
@@ -228,14 +227,7 @@ impl ConsumerPos {
     fn consume(&mut self, len: usize) {
         let Self { pos, metadata } = self;
 
-        // TODO: Use primitive method when https://github.com/rust-lang/rust/issues/88581 is stabilized.
-        fn next_multiple_of(n: usize, multiple: usize) -> usize {
-            match n % multiple {
-                0 => n,
-                rem => n + (multiple - rem),
-            }
-        }
-        *pos += next_multiple_of(usize::try_from(BPF_RINGBUF_HDR_SZ).unwrap() + len, 8);
+        *pos += (usize::try_from(BPF_RINGBUF_HDR_SZ).unwrap() + len).next_multiple_of(8);
 
         // Write operation needs to be properly ordered with respect to the producer committing new
         // data to the ringbuf. The producer uses xchg (SeqCst) to commit new data [1]. The producer
@@ -381,7 +373,7 @@ impl ProducerData {
                     panic!("{:?} not in {:?}", offset..offset + len, 0..data.len())
                 })
             };
-            let header_ptr: *const AtomicU32 = must_get_data(offset, mem::size_of::<AtomicU32>())
+            let header_ptr: *const AtomicU32 = must_get_data(offset, size_of::<AtomicU32>())
                 .as_ptr()
                 .cast();
             // Pair the kernel's SeqCst write (implies Release) [1] with an Acquire load. This

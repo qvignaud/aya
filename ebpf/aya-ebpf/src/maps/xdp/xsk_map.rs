@@ -1,12 +1,10 @@
-use core::{cell::UnsafeCell, mem};
-
 use aya_ebpf_bindings::bindings::bpf_xdp_sock;
 
 use super::try_redirect_map;
 use crate::{
-    bindings::{bpf_map_def, bpf_map_type::BPF_MAP_TYPE_XSKMAP},
+    bindings::bpf_map_type::BPF_MAP_TYPE_XSKMAP,
     lookup,
-    maps::PinningType,
+    maps::{MapDef, PinningType},
 };
 
 /// An array of AF_XDP sockets.
@@ -53,60 +51,40 @@ use crate::{
 ///   traffic however will not be impacted, contrary to reducing the queue count.
 #[repr(transparent)]
 pub struct XskMap {
-    def: UnsafeCell<bpf_map_def>,
+    def: MapDef,
 }
 
-unsafe impl Sync for XskMap {}
-
 impl XskMap {
-    /// Creates a [`XskMap`] with a set maximum number of elements.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use aya_ebpf::{macros::map, maps::XskMap};
-    ///
-    /// #[map]
-    /// static SOCKS: XskMap =  XskMap::with_max_entries(8, 0);
-    /// ```
-    pub const fn with_max_entries(max_entries: u32, flags: u32) -> Self {
-        Self {
-            def: UnsafeCell::new(bpf_map_def {
-                type_: BPF_MAP_TYPE_XSKMAP,
-                key_size: mem::size_of::<u32>() as u32,
-                value_size: mem::size_of::<u32>() as u32,
-                max_entries,
-                map_flags: flags,
-                id: 0,
-                pinning: PinningType::None as u32,
-            }),
-        }
-    }
-
-    /// Creates a [`XskMap`] with a set maximum number of elements that can be pinned to the BPF
-    /// filesystem (bpffs).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use aya_ebpf::{macros::map, maps::XskMap};
-    ///
-    /// #[map]
-    /// static SOCKS: XskMap = XskMap::pinned(8, 0);
-    /// ```
-    pub const fn pinned(max_entries: u32, flags: u32) -> Self {
-        Self {
-            def: UnsafeCell::new(bpf_map_def {
-                type_: BPF_MAP_TYPE_XSKMAP,
-                key_size: mem::size_of::<u32>() as u32,
-                value_size: mem::size_of::<u32>() as u32,
-                max_entries,
-                map_flags: flags,
-                id: 0,
-                pinning: PinningType::ByName as u32,
-            }),
-        }
-    }
+    map_constructors!(
+        u32,
+        u32,
+        BPF_MAP_TYPE_XSKMAP,
+        with_docs {
+            /// Creates a [`XskMap`] with a set maximum number of elements.
+            ///
+            /// # Examples
+            ///
+            /// ```rust,no_run
+            /// use aya_ebpf::{macros::map, maps::XskMap};
+            ///
+            /// #[map]
+            /// static SOCKS: XskMap =  XskMap::with_max_entries(8, 0);
+            /// ```
+        },
+        pinned_docs {
+            /// Creates a [`XskMap`] with a set maximum number of elements that can be pinned to
+            /// the BPF filesystem (bpffs).
+            ///
+            /// # Examples
+            ///
+            /// ```rust,no_run
+            /// use aya_ebpf::{macros::map, maps::XskMap};
+            ///
+            /// #[map]
+            /// static SOCKS: XskMap = XskMap::pinned(8, 0);
+            /// ```
+        },
+    );
 
     /// Retrieves the queue to which the socket is bound at `index` in the array.
     ///
@@ -124,7 +102,7 @@ impl XskMap {
     /// ```
     #[inline(always)]
     pub fn get(&self, index: u32) -> Option<u32> {
-        let value = lookup(self.def.get().cast(), &index)?;
+        let value = lookup(self.def.as_ptr(), &index)?;
         let value: &bpf_xdp_sock = unsafe { value.as_ref() };
         Some(value.queue_id)
     }
@@ -153,6 +131,6 @@ impl XskMap {
     /// ```
     #[inline(always)]
     pub fn redirect(&self, index: u32, flags: u64) -> Result<u32, u32> {
-        try_redirect_map(&self.def, index, flags)
+        try_redirect_map(self.def.as_ptr(), index, flags)
     }
 }

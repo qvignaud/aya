@@ -21,7 +21,7 @@ jobs:
       - group_id
       - runIntegrationTest
     with:
-      version: ^0.10.0
+      version: 0.10.0
       melodium_group_id: "${{ steps.group_id.outputs.uuid }}"
       command: |
         run --api-report --logs 'logs/melodium.log' .melodium-ci/Compo.toml ciUbuntuLatestEntrypoint --github_contexts '{ "github": ${{ toJSON(github) }}, "vars": ${{ toJSON(vars) }}, "secrets": { "GITHUB_TOKEN": "'"$GITHUB_TOKEN"'" } }' --need_run_integration_test '${{ toJSON(needs.runIntegrationTest.outputs) }}'
@@ -37,7 +37,7 @@ jobs:
       - buildTestAyaEbpf
       - lint
     with:
-      version: ^0.10.0
+      version: 0.10.0
       melodium_group_id: "${{ steps.group_id.outputs.uuid }}"
       command: |
         run --api-report --logs 'logs/melodium.log' .melodium-ci/Compo.toml cimatrixOsEntrypoint --github_contexts '{ "github": ${{ toJSON(github) }}, "vars": ${{ toJSON(vars) }}, "secrets": { "GITHUB_TOKEN": "'"$GITHUB_TOKEN"'" } }' --need_build_test_aya '${{ toJSON(needs.buildTestAya.outputs) }}' --need_build_test_aya_ebpf '${{ toJSON(needs.buildTestAyaEbpf.outputs) }}' --need_lint '${{ toJSON(needs.lint.outputs) }}'

@@ -1,0 +1,77 @@
+use cicd/services/github::replicateContextsWithInputs
+use cicd/services/github::runAction
+use javascript::JavaScriptEngine
+use std/data/string_map::StringMap
+use std/data/string_map::|entry
+use std/data/string_map::|map
+use std/ops/option::|wrap
+
+#[github_action(re-actors/alls-green@release/v1)]
+#[generated(true)]
+treatment allsGreen[contexts: JavaScriptEngine](
+    var allowed_failures: string = "[]",
+    var allowed_skips: string = "[]",
+    var jobs: string = ""
+)
+  input trigger: Block<void>
+  output completed: Block<void>
+  output continue: Block<void>
+  output failed: Block<void>
+  model composite_contexts: JavaScriptEngine()
+{
+    outcome: runAction[contexts = composite_contexts](
+        commands = ${{{python -m normalize_needed_jobs_status \
+"$(cat << EOM
+  ${{ inputs.allowed-failures }}
+EOM
+)" \
+"$(cat << EOM
+  ${{ inputs.allowed-skips }}
+EOM
+)" \
+"$(cat << EOM
+  ${{ inputs.jobs }}
+EOM
+)"
+}}},
+        display_name = "Decide whether the input jobs succeeded or failed",
+        env = |wrap<StringMap>(
+            |map(
+                [
+                    |entry(
+                        "PYTHONPATH",
+                        "${{ github.action_path }}/src"
+                    )
+                ]
+            )
+        ),
+        id = "outcome",
+        name = "outcome",
+        shell = "bash"
+    )
+    replicateContextsWithInputs[action_contexts = composite_contexts, main_contexts = contexts](
+        inputs = |map(
+            [
+                |entry(
+                    "jobs",
+                    jobs
+                ),
+                |entry(
+                    "allowed-failures",
+                    allowed_failures
+                ),
+                |entry(
+                    "allowed-skips",
+                    allowed_skips
+                )
+            ]
+        )
+    )
+
+    Self.trigger -> replicateContextsWithInputs.trigger
+    replicateContextsWithInputs.ready -> outcome.trigger
+    outcome.completed -> Self.completed
+    outcome.failed -> Self.failed
+    outcome.continue -> Self.continue
+}
+
